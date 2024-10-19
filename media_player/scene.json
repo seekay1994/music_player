@@ -1,0 +1,1550 @@
+{
+	"camera" : 
+	{
+		"center" : "0.00000 0.00000 -1.00000",
+		"eye" : "0.00000 0.00000 0.00000",
+		"up" : "0.00000 1.00000 0.00000"
+	},
+	"general" : 
+	{
+		"ambientcolor" : "0.30000 0.30000 0.30000",
+		"bloom" : false,
+		"bloomhdrfeather" : 0.1,
+		"bloomhdriterations" : 8,
+		"bloomhdrscatter" : 1.619,
+		"bloomhdrstrength" : 2.0,
+		"bloomhdrthreshold" : 1.0,
+		"bloomstrength" : 2.0,
+		"bloomthreshold" : 0.64999998,
+		"bloomtint" : "1.00000 1.00000 1.00000",
+		"camerafade" : true,
+		"cameraparallax" : true,
+		"cameraparallaxamount" : 0.5,
+		"cameraparallaxdelay" : 2.0,
+		"cameraparallaxmouseinfluence" : 0.25,
+		"camerapreview" : true,
+		"camerashake" : false,
+		"camerashakeamplitude" : 0.5,
+		"camerashakeroughness" : 1.0,
+		"camerashakespeed" : 3.0,
+		"clearcolor" : "0.70000 0.70000 0.70000",
+		"clearenabled" : true,
+		"farz" : 10000.0,
+		"fov" : 50.0,
+		"hdr" : false,
+		"nearz" : 0.0099999998,
+		"orthogonalprojection" : 
+		{
+			"height" : 1080,
+			"width" : 1920
+		},
+		"perspectiveoverridefov" : 30.0,
+		"skylightcolor" : "0.30000 0.30000 0.30000",
+		"zoom" : 1.0
+	},
+	"objects" : 
+	[
+		{
+			"alpha" : 0.0,
+			"angles" : 
+			{
+				"script" : "'use strict';\n\nlet currentIndex = 0;\nlet audioLayers = [];\nlet isPlaying = false;\nlet currentPlayTime = 0;\nlet currentVolume\nlet songDurationInSeconds = null;\nlet songFinished = false;\nlet delayTimer = 0;\n\nexport function init() {\n    audioLayers = thisLayer.getChildren();\n    \n    currentVolume = shared.ckMediaVolumeSlider || 1; // Standard Volume in case you don’t want to use the volume slider\n\n    for (let layer of audioLayers) {\n        if (!validateLayerName(layer.name)) {\n            throw new Error(`Invalid audio layer name format: ${layer.name} Expected format: \"Pink Floyd - Time * 7:02\"`);\n        }\n    }\n\n    shared.ckMediaPlayButton = true;\n    let lastSongIndex = localStorage.get('lastSongIndex');\n\n    currentIndex = lastSongIndex !== undefined ? parseInt(lastSongIndex, 10) : Math.floor(Math.random() * audioLayers.length);\n\n    pauseAllSongs();\n    playCurrentSong();\n}\n\nfunction validateLayerName(layerName) {\n    let parts = layerName.split(\"*\");\n\n    if (parts.length === 2 && parts[0].includes(\"-\")) {\n        let artistSongParts = parts[0].split(\"-\");\n        if (artistSongParts.length === 2 && parseDuration(parts[1].trim()) !== null) {\n            return true;\n        }\n    }\n    return false;\n}\n\nexport function update() {\n    if (shared.ckMediaPlayButton) {\n        if (!isPlaying) {\n            playCurrentSong();\n        }\n    } else if (isPlaying) {\n        pauseCurrentSong();\n    }\n\n    if (isPlaying) {\n        let currentLayer = audioLayers[currentIndex];\n        currentPlayTime += engine.frametime;\n\n        updateSongProgression();\n\n        if (!currentLayer.isPlaying()) {\n            handleSongEnd();\n        }\n    }\n\n    if (shared.ckMediaNextButton) {\n        handleSongChange(false);\n        shared.ckMediaNextButton = false;\n    }\n\n    if (shared.ckMediaPreviousButton) {\n        if (currentPlayTime > 3) { // the time a song is allowed to play before the previous-button will restart it and not switch to the previous song\n            restartCurrentSong();\n        } else {\n            handleSongChange(true);\n        }\n        shared.ckMediaPreviousButton = false;\n    }\n\n    if (shared.ckMediaVolumeSliderSmooth !== undefined) {\n        setVolume(shared.ckMediaVolumeSliderSmooth);\n    }\n}\n\nfunction playCurrentSong() {\n    let currentLayer = audioLayers[currentIndex];\n\n    if (!isPlaying && currentLayer) {\n        currentLayer.play();\n        isPlaying = true;\n\n        if (currentPlayTime === 0) {\n            currentPlayTime = 0;\n            shared.ckMediaSongProgression = 0;\n        }\n\n        localStorage.set('lastSongIndex', currentIndex);\n\n        if (!setArtistSongAndDuration(currentLayer.name)) {\n            return;\n        }\n    }\n\n    setVolume(shared.ckMediaVolumeSliderSmooth);\n}\n\nfunction pauseCurrentSong() {\n    let currentLayer = audioLayers[currentIndex];\n    if (isPlaying && currentLayer) {\n        currentLayer.pause();\n        isPlaying = false;\n    }\n}\n\nfunction restartCurrentSong() {\n    let currentLayer = audioLayers[currentIndex];\n    if (currentLayer) {\n        currentLayer.stop();\n        currentLayer.play();\n        currentPlayTime = 0;\n        shared.ckMediaSongProgression = 0;\n        isPlaying = true;\n\n        if (!setArtistSongAndDuration(currentLayer.name)) {\n            return;\n        }\n\n        setVolume(shared.ckMediaVolumeSliderSmooth);\n    }\n}\n\nfunction handleSongEnd() {\n    if (!songFinished) {\n        songFinished = true;\n        delayTimer = 0;\n    }\n\n    delayTimer += engine.frametime;\n\n    if (delayTimer >= 0.1) {\n        switch (shared.ckMediaLoopButton) {\n            case 'true':\n                restartCurrentSong();\n                break;\n            case 'shuffle':\n                playRandomSong();\n                break;\n            default:\n                nextSong();\n                break;\n        }\n        songFinished = false;\n    }\n}\n\nfunction nextSong() {\n    handleSongChange(false);\n}\n\nfunction playRandomSong() {\n    stopCurrentSong();\n\n    let previousIndex = currentIndex;\n    while (currentIndex === previousIndex && audioLayers.length > 1) {\n        currentIndex = Math.floor(Math.random() * audioLayers.length);\n    }\n\n    shared.ckMediaSongProgression = 0;\n    currentPlayTime = 0;\n\n    shared.ckMediaPlayButton = true;\n    isPlaying = false;\n\n    playCurrentSong();\n}\n\nfunction handleSongChange(isPrevious = false) {\n    stopCurrentSong();\n\n    if (shared.ckMediaLoopButton === 'shuffle') {\n        playRandomSong();\n    } else {\n        currentIndex = isPrevious\n            ? (currentIndex - 1 + audioLayers.length) % audioLayers.length\n            : (currentIndex + 1) % audioLayers.length;\n\n        isPlaying = false;\n        shared.ckMediaSongProgression = 0;\n        currentPlayTime = 0;\n        shared.ckMediaPlayButton = true;\n\n        playCurrentSong();\n    }\n}\n\nfunction stopCurrentSong() {\n    let currentLayer = audioLayers[currentIndex];\n    if (currentLayer.isPlaying()) {\n        currentLayer.stop();\n    }\n}\n\nfunction pauseAllSongs() {\n    audioLayers.forEach(layer => {\n        if (layer.isPlaying()) {\n            layer.pause();\n        }\n    });\n}\n\nfunction setVolume(volume) {\n    let currentLayer = audioLayers[currentIndex];\n    currentVolume = volume;\n    if (currentLayer) {\n        currentLayer.volume = currentVolume;\n    }\n}\n\nfunction setArtistSongAndDuration(layerName) {\n    let parts = layerName.split(\"*\");\n    let artistSongParts = parts[0].split(\"-\");\n\n    shared.ckMediaCurrentArtist = artistSongParts[0].trim();\n    shared.ckMediaCurrentSong = artistSongParts[1].trim();\n\n    songDurationInSeconds = parseDuration(parts[1].trim());\n}\n\nfunction parseDuration(durationString) {\n    let parts = durationString.split(\":\");\n\n    if (parts.length === 2) {\n        let minutes = parseInt(parts[0], 10);\n        let seconds = parseInt(parts[1], 10);\n\n        if (!isNaN(minutes) && !isNaN(seconds)) {\n            return (minutes * 60) + seconds;\n        }\n    }\n\n    return null;\n}\n\nfunction updateSongProgression() {\n    let progression = currentPlayTime / songDurationInSeconds;\n    shared.ckMediaSongProgression = Math.min(Math.max(progression, 0), 1);\n}",
+				"value" : "0.00000 -0.00000 0.00000"
+			},
+			"castshadow" : false,
+			"id" : 18,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Player and Music Container",
+			"origin" : "0.00000 540.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"size" : "8.00000 8.00000"
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"id" : 117,
+			"maxtime" : 5.0,
+			"mintime" : 1.0,
+			"muteineditor" : true,
+			"name" : "seekay - demo one * 1:04",
+			"origin" : "-694.00000 -540.00000 0.00000",
+			"parent" : 18,
+			"playbackmode" : "single",
+			"sound" : [ "sounds/seekay - demo one.ogg" ],
+			"startsilent" : true,
+			"volume" : 1.0
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"id" : 116,
+			"maxtime" : 5.0,
+			"mintime" : 1.0,
+			"muteineditor" : true,
+			"name" : "seekay - demo two * 0:41",
+			"origin" : "-694.00000 -540.00000 0.00000",
+			"parent" : 18,
+			"playbackmode" : "single",
+			"sound" : [ "sounds/seekay - demo two.ogg" ],
+			"startsilent" : true,
+			"volume" : 1.0
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"id" : 139,
+			"maxtime" : 5.0,
+			"mintime" : 1.0,
+			"muteineditor" : true,
+			"name" : "seekay - demo three * 0:50",
+			"origin" : "-694.00000 -540.00000 0.00000",
+			"parent" : 18,
+			"playbackmode" : "single",
+			"sound" : [ "sounds/seekay - demo three.ogg" ],
+			"startsilent" : true,
+			"volume" : 1.0
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"id" : 161,
+			"image" : "models/util/composelayer.json",
+			"name" : "Cover Blur Mask",
+			"origin" : "1520.00000 540.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"size" : "512.00000 512.00000"
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : "0.00000 0.00000 0.00000",
+			"id" : 274,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Backdrop",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 161,
+			"scale" : "2.00000 2.00000 1.00000",
+			"size" : "256.00000 256.00000"
+		},
+		{
+			"alignment" : "bottom",
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"copybackground" : false,
+			"id" : 102,
+			"image" : "models/util/composelayer.json",
+			"name" : "Adjustable Composition Layer",
+			"origin" : "0.00000 -130.00000 0.00000",
+			"parent" : 161,
+			"size" : "512.00000 74.00000"
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"id" : 111,
+			"image" : "models/util/solidlayer.json",
+			"name" : "extendScreen",
+			"origin" : 
+			{
+				"script" : "'use strict';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'sharedValueName'\n    })\n    .addCombo({\n        name: 'axis',\n        label: 'Axis',\n        options: [\n            { label: 'X', value: 'x' },\n            { label: 'Y', value: 'y' },\n            { label: 'Z', value: 'z' }\n        ],\n        value: 'x'\n    })\n    .finish();\n\nexport function update(value) {\n    const sharedValue = shared[scriptProperties.sharedValueName];\n\n    if (typeof value === 'object' && sharedValue !== undefined) {\n        switch (scriptProperties.axis) {\n            case 'x':\n                value.x = sharedValue;\n                break;\n            case 'y':\n                value.y = sharedValue;\n                break;\n            case 'z':\n                value.z = sharedValue;\n                break;\n        }\n    }\n\n    return value;\n}\n",
+				"scriptproperties" : 
+				{
+					"axis" : "y",
+					"sharedValueName" : "moveScreenToggle"
+				},
+				"value" : "0.00000 48.00000 0.00000"
+			},
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 102,
+			"size" : "512.00000 64.00000"
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"id" : 141,
+			"image" : "models/util/solidlayer.json",
+			"name" : "mainBackdrop",
+			"origin" : "0.00000 -194.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 161,
+			"size" : "512.00000 128.00000"
+		},
+		{
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor#'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_5",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor5",
+					"transitionDuration" : 0.2,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.02353 0.02353 0.02353"
+			},
+			"id" : 182,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Background",
+			"origin" : "960.00000 540.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"scale" : "32.00000 32.00000 1.00000",
+			"size" : "512.00000 512.00000"
+		},
+		{
+			"alpha" : 0.2,
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor#'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_2",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor2",
+					"transitionDuration" : 0.25,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"id" : 210,
+			"image" : "models/bloom.json",
+			"name" : "bloom",
+			"origin" : "19.67004 2755.60376 0.00000",
+			"parallaxDepth" : "2.00000 -2.00000",
+			"scale" : "8.00000 8.00000 1.00000",
+			"size" : "512.00000 512.00000"
+		},
+		{
+			"alpha" : 0.25,
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor#'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : 
+						{
+							"user" : "_2",
+							"value" : "1.00000 1.00000 1.00000"
+						}
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.34999999,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : true
+					}
+				},
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"id" : 213,
+			"image" : "models/bloom.json",
+			"name" : "bloom",
+			"origin" : "3665.03687 -80.23428 0.00000",
+			"parallaxDepth" : "-1.00000 1.00000",
+			"scale" : "8.00000 8.00000 1.00000",
+			"size" : "512.00000 512.00000"
+		},
+		{
+			"castshadow" : false,
+			"effects" : 
+			[
+				{
+					"file" : "effects/blur/effect.json",
+					"id" : 349,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"id" : 350
+						},
+						{
+							"constantshadervalues" : 
+							{
+								"scale" : "8 8"
+							},
+							"id" : 351
+						},
+						{
+							"combos" : 
+							{
+								"VERTICAL" : 1
+							},
+							"constantshadervalues" : 
+							{
+								"scale" : "8 8"
+							},
+							"id" : 352
+						},
+						{
+							"constantshadervalues" : 
+							{
+								"compositecolor" : "1 1 1"
+							},
+							"id" : 353
+						}
+					],
+					"visible" : true
+				},
+				{
+					"file" : "effects/workshop/3341755068/procedural_noise/effect.json",
+					"id" : 263,
+					"name" : "Noise",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"AB_TYPECOLOR" : 3,
+								"BLENDMODE" : 6,
+								"WORLEYMIX" : 1
+							},
+							"constantshadervalues" : 
+							{
+								"Color high" : "1 1 1",
+								"Color low" : "0 0 0",
+								"Exponent" : 1.0,
+								"Fractal influence" : 0.80000001,
+								"Fractal scaling" : 1.85,
+								"Fractals" : 8,
+								"Gradient" : 0.85000002,
+								"Magnitude" : 1.0,
+								"Offset" : "0.0 0.0",
+								"Opacity" : 0.025,
+								"Scale" : "0.33 0.33",
+								"Seed" : 0.0,
+								"Thresholds" : "0 1",
+								"Thresholds offset" : -0.16,
+								"animationspeed" : 0,
+								"scrollirection" : -0.052359879,
+								"scrollspeed" : 0.0
+							},
+							"id" : 264
+						}
+					],
+					"visible" : true
+				},
+				{
+					"file" : "effects/workshop/3341755068/procedural_noise/effect.json",
+					"id" : 277,
+					"name" : "Film Grain",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"AB_TYPECOLOR" : 2,
+								"BLENDMODE" : 12
+							},
+							"constantshadervalues" : 
+							{
+								"Color high" : "1 1 1",
+								"Color low" : "0 0 0",
+								"Exponent" : 1,
+								"Fractal influence" : 0.80000001,
+								"Fractal scaling" : 2.3199999,
+								"Fractals" : 1,
+								"Gradient" : 0.85000002,
+								"Offset" : "0.0 0.0",
+								"Opacity" : 0.2,
+								"Scale" : "96 96",
+								"Seed" : 0,
+								"Thresholds" : "0 1",
+								"Thresholds offset" : 0,
+								"animationspeed" : 2.5,
+								"scrollirection" : -0.052359879,
+								"scrollspeed" : 0
+							},
+							"id" : 278
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 238,
+			"image" : "models/util/fullscreenlayer.json",
+			"name" : "Film Camera",
+			"parallaxDepth" : "0.00000 0.00000"
+		},
+		{
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor#'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.55000001,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : true
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"effects" : 
+			[
+				{
+					"file" : "effects/workshop/3083593512/rounded_mask/effect.json",
+					"id" : 519,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"constantshadervalues" : 
+							{
+								"Radius" : 0.1,
+								"Size" : "1 1",
+								"ui_editor_properties_opacity" : 1.0
+							},
+							"id" : 520
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 517,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Frame",
+			"origin" : "960.00000 540.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"size" : "520.00000 520.00000"
+		},
+		{
+			"angles" : 
+			{
+				"script" : "'use strict';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Album Covers: Shared Value Name',\n        value: 'sharedValueName'\n    })\n    .finish();\n\nlet previousLayer = null;\n\nexport function update() {\n    const currentLayerName = shared[scriptProperties.sharedValueName];\n    \n    // If there's a previous layer, hide it\n    if (previousLayer && previousLayer.name !== currentLayerName) {\n        previousLayer.visible = false;\n    }\n\n    // Get the current layer\n    const currentLayer = thisScene.getLayer(currentLayerName);\n    \n    // Make the current layer visible\n    if (currentLayer) {\n        currentLayer.visible = true;\n        previousLayer = currentLayer; // Update the previous layer\n    }\n\n}\n",
+				"scriptproperties" : 
+				{
+					"sharedValueName" : "ckMediaCurrentSong"
+				},
+				"value" : "0.00000 -0.00000 0.00000"
+			},
+			"castshadow" : false,
+			"dependencies" : [ 161 ],
+			"effects" : 
+			[
+				{
+					"file" : "effects/blur/effect.json",
+					"id" : 165,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"id" : 166
+						},
+						{
+							"constantshadervalues" : 
+							{
+								"scale" : "0.25 0.25"
+							},
+							"id" : 167
+						},
+						{
+							"combos" : 
+							{
+								"VERTICAL" : 1
+							},
+							"constantshadervalues" : 
+							{
+								"scale" : "0.25 0.25"
+							},
+							"id" : 170
+						},
+						{
+							"constantshadervalues" : 
+							{
+								"compositecolor" : "1 1 1"
+							},
+							"id" : 171,
+							"textures" : [ null, "_rt_imageLayerComposite_161_a", null ]
+						}
+					],
+					"visible" : true
+				},
+				{
+					"file" : "effects/blurprecise/effect.json",
+					"id" : 186,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"constantshadervalues" : 
+							{
+								"scale" : "0.5 0.5"
+							},
+							"id" : 187
+						},
+						{
+							"combos" : 
+							{
+								"ENABLEMASK" : 1,
+								"VERTICAL" : 1
+							},
+							"constantshadervalues" : 
+							{
+								"scale" : "0.5 0.5"
+							},
+							"id" : 188,
+							"textures" : [ null, null, "_rt_imageLayerComposite_161_a" ]
+						}
+					],
+					"visible" : true
+				},
+				{
+					"file" : "effects/workshop/3083593512/rounded_mask/effect.json",
+					"id" : 417,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"constantshadervalues" : 
+							{
+								"Radius" : 0.1,
+								"Size" : "1 1",
+								"ui_editor_properties_opacity" : 1.0
+							},
+							"id" : 418
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 149,
+			"image" : "models/util/composelayer.json",
+			"name" : "Album Covers || Colors",
+			"origin" : 
+			{
+				"script" : "'use strict';\n\nconst colorPalettes = [\n    { name: \"demo one\", colors: [\"#000000\", \"#a82929\", \"#000000\", \"#ffffff\", \"#4c1515\"] },\n    { name: \"demo two\", colors: [\"#000000\", \"#174e77\", \"#ffffff\", \"#ffffff\", \"#183044\"] },\n    { name: \"demo three\", colors: [\"#000000\", \"#ffffff\", \"#ffffff\", \"#b0de8d\", \"#4d6031\"] },\n    { name: \"Neon Night\", colors: [\"#082438\", \"#3b2144\", \"#6e1e51\", \"#a11a5d\", \"#d4176a\"] },\n    { name: \"Prismarine\", colors: [\"#B0A1BA\", \"#A5B5BF\", \"#ABC8C7\", \"#B8E2C8\", \"#BFF0D4\"] },\n    { name: \"Playful\", colors: [\"#ffdaf7\", \"#c7ffb8\", \"#eedbff\", \"#feffbb\", \"#ffebb8\"] },\n    { name: \"Old Fashioned\", colors: [\"#264653\", \"#2a9d8f\", \"#e9c46a\", \"#f4a261\", \"#e76f51\"] },\n    { name: \"Baby Blues\", colors: [\"#edf2fa\", \"#d7e3fc\", \"#ccdbfd\", \"#c1d3fe\", \"#abc4ff\"] }\n];\n\nlet paletteVec3Cache = {};\n\nexport var scriptProperties = createScriptProperties()\n    .addText({ name: 'sharedValueName', label: 'Colors: Shared Palette Name', value: 'demo one' })\n    .finish();\n\nlet activePalette = null;\n\nexport function init(value) {\n    colorPalettes.forEach(palette => {\n        paletteVec3Cache[palette.name] = palette.colors.map(hexToVec3);\n    });\n\n    pickActivePalette();\n    return value;\n}\n\nexport function update(value) {\n    pickActivePalette();\n    return value;\n}\n\nconst setSharedPaletteColors = (paletteName) => {\n    const colorVecs = paletteVec3Cache[paletteName];\n\n    for (let i = 0; i < colorVecs.length; i++) {\n        shared[`paletteColor${i + 1}`] = colorVecs[i];\n    }\n\n    for (let i = colorVecs.length; i < 5; i++) {\n        shared[`paletteColor${i + 1}`] = null;\n    }\n};\n\nconst pickActivePalette = () => {\n    const selectedPaletteName = shared[scriptProperties.sharedValueName];\n\n    const selectedPalette = colorPalettes.find(palette => palette.name === selectedPaletteName);\n\n    if (selectedPalette && activePalette !== selectedPalette.name) {\n        activePalette = selectedPalette.name;\n        setSharedPaletteColors(activePalette);\n    }\n};\n\nconst hexToVec3 = hex => {\n    const bigint = parseInt(hex.slice(1), 16);\n    return new Vec3(((bigint >> 16) & 255) / 255, ((bigint >> 8) & 255) / 255, (bigint & 255) / 255);\n};\n",
+				"scriptproperties" : 
+				{
+					"sharedValueName" : "ckMediaCurrentSong"
+				},
+				"value" : "960.00000 540.00000 0.00000"
+			},
+			"parallaxDepth" : "0.00000 0.00000",
+			"size" : "512.00000 512.00000"
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"id" : 216,
+			"image" : "models/demo one.json",
+			"name" : "demo one",
+			"parent" : 149,
+			"size" : "512.00000 512.00000",
+			"visible" : false
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"id" : 234,
+			"image" : "models/demo two.json",
+			"name" : "demo two",
+			"parent" : 149,
+			"size" : "512.00000 512.00000",
+			"visible" : false
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"id" : 221,
+			"image" : "models/demo three.json",
+			"name" : "demo three",
+			"parent" : 149,
+			"size" : "512.00000 512.00000",
+			"visible" : false
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"effects" : 
+			[
+				{
+					"file" : "effects/workshop/3083593512/rounded_mask/effect.json",
+					"id" : 411,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"constantshadervalues" : 
+							{
+								"Radius" : 0.1,
+								"Size" : "1 1",
+								"Softness" : 0,
+								"ui_editor_properties_opacity" : 1.0
+							},
+							"id" : 412
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 147,
+			"image" : "models/util/composelayer.json",
+			"name" : "Music Player UI",
+			"origin" : "960.00000 540.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"size" : "512.00000 515.00000"
+		},
+		{
+			"alignment" : "bottom",
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"id" : 148,
+			"image" : "models/util/composelayer.json",
+			"name" : "extendScreen CLIPPING",
+			"origin" : "0.00000 -130.00000 0.00000",
+			"parent" : 147,
+			"size" : "512.00000 74.00000"
+		},
+		{
+			"alpha" : 0.25,
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_1",
+						"value" : 
+						{
+							"user" : "newproperty",
+							"value" : 
+							{
+								"user" : "schemecolor",
+								"value" : 
+								{
+									"user" : "_1",
+									"value" : 
+									{
+										"user" : "_1",
+										"value" : 
+										{
+											"user" : "_1",
+											"value" : "1.00000 1.00000 1.00000"
+										}
+									}
+								}
+							}
+						}
+					},
+					"sharedValueName" : "paletteColor1",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"id" : 154,
+			"image" : "models/util/solidlayer.json",
+			"name" : "extendScreen",
+			"origin" : 
+			{
+				"script" : "'use strict';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'sharedValueName'\n    })\n    .addCombo({\n        name: 'axis',\n        label: 'Axis',\n        options: [\n            { label: 'X', value: 'x' },\n            { label: 'Y', value: 'y' },\n            { label: 'Z', value: 'z' }\n        ],\n        value: 'x'\n    })\n    .finish();\n\nexport function update(value) {\n    const sharedValue = shared[scriptProperties.sharedValueName];\n\n    if (typeof value === 'object' && sharedValue !== undefined) {\n        switch (scriptProperties.axis) {\n            case 'x':\n                value.x = sharedValue;\n                break;\n            case 'y':\n                value.y = sharedValue;\n                break;\n            case 'z':\n                value.z = sharedValue;\n                break;\n        }\n    }\n\n    return value;\n}\n",
+				"scriptproperties" : 
+				{
+					"axis" : "y",
+					"sharedValueName" : "moveScreenToggle"
+				},
+				"value" : "0.00000 48.00000 0.00000"
+			},
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 148,
+			"size" : "512.00000 64.00000"
+		},
+		{
+			"alignment" : "left",
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"effects" : 
+			[
+				{
+					"file" : "effects/workshop/3325757623/rounded_mask/effect.json",
+					"id" : 168,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"B_SQUARE" : 0,
+								"SOFT" : 1
+							},
+							"constantshadervalues" : 
+							{
+								"Radius" : 1,
+								"Size" : "1 1",
+								"Softness" : 0.5,
+								"ui_editor_properties_opacity" : 1
+							},
+							"id" : 169
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 160,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Colored Slider",
+			"origin" : "96.00000 0.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 154,
+			"size" : "128.00000 16.00000"
+		},
+		{
+			"alignment" : "left",
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"effects" : 
+			[
+				{
+					"file" : "effects/workshop/3325757623/rounded_mask/effect.json",
+					"id" : 184,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"B_SQUARE" : 0
+							},
+							"constantshadervalues" : 
+							{
+								"Radius" : 1,
+								"Size" : "1 1",
+								"ui_editor_properties_opacity" : 1.0
+							},
+							"id" : 200
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 178,
+			"image" : "models/util/composelayer.json",
+			"name" : "volumeSlider CLIPPING",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 160,
+			"size" : "128.00000 16.00000"
+		},
+		{
+			"alignment" : "left",
+			"alpha" : 0.25,
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_3",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor3",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"id" : 202,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Solid",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 178,
+			"size" : "132.00000 32.00000"
+		},
+		{
+			"alignment" : "right",
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"id" : 206,
+			"image" : "models/util/solidlayer.json",
+			"name" : "COLOR FILL",
+			"origin" : 
+			{
+				"script" : "'use strict';\n// Please note: Do not remove this line or asset references may break.\nexport let __workshopId = '3325757623';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'sharedValueName'\n    })\n    .addSlider({\n        name: 'minPosition',\n        label: 'Subtracted Pixels',\n        value: 0,\n        min: -1000,\n        max: 1000,\n        integer: true\n    })\n    .addSlider({\n        name: 'distance',\n        label: 'Slider X Resolution',\n        value: 256,\n        min: 0,\n        max: 1000,\n        integer: true\n    })\n    .addSlider({\n        name: 'minValue',\n        label: 'Slider Min Value',\n        value: 0,\n        min: -10,\n        max: 10,\n        integer: true\n    })\n    .addSlider({\n        name: 'maxValue',\n        label: 'Slider Max Value',\n        value: 1,\n        min: -10,\n        max: 10,\n        integer: true\n    })\n    .finish();\n\nexport function update(value) {\n    const sharedName = scriptProperties.sharedValueName || 'sharedValueName';\n\n    const sharedValue = shared[sharedName] || scriptProperties.minValue;\n    const minValue = scriptProperties.minValue;\n    const maxValue = scriptProperties.maxValue;\n    const clampedValue = Math.max(minValue, Math.min(maxValue, sharedValue));\n\n    const normalizedValue = (clampedValue - minValue) / (maxValue - minValue);\n\n    const minPosition = scriptProperties.minPosition;\n    const totalDistance = scriptProperties.distance - (minPosition * 2);\n\n    const newX = minPosition + (normalizedValue * totalDistance);\n\n    value.x = newX;\n\n    return value;\n}\n",
+				"scriptproperties" : 
+				{
+					"distance" : 128,
+					"maxValue" : 1,
+					"minPosition" : 12,
+					"minValue" : 0,
+					"sharedValueName" : "ckMediaVolumeSliderSmooth"
+				},
+				"value" : "63.00000 0.00000 0.00000"
+			},
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 178,
+			"size" : "130.00000 20.00000"
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_2",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor2",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.02745 0.62745 0.76471"
+			},
+			"effects" : 
+			[
+				{
+					"file" : "effects/workshop/3325757623/rounded_mask/effect.json",
+					"id" : 208,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"B_SQUARE" : 0
+							},
+							"constantshadervalues" : 
+							{
+								"Radius" : 1,
+								"Size" : "1 1",
+								"ui_editor_properties_opacity" : 1.0
+							},
+							"id" : 209
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 207,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Slider Knob (SETTINGS)",
+			"origin" : 
+			{
+				"script" : "'use strict';\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'minValue',\n        label: 'Minimum Value',\n        value: 0,\n        min: 0,\n        max: 10,\n        integer: false\n    })\n    .addSlider({\n        name: 'maxValue',\n        label: 'Maximum Value',\n        value: 5,\n        min: 0,\n        max: 10,\n        integer: false\n    })\n    .addSlider({\n        name: 'defaultValue',\n        label: 'Default Value',\n        value: 2.5,\n        min: 0,\n        max: 10,\n        integer: false\n    })\n    .addSlider({\n        name: 'pixelAdjustment',\n        label: 'Subtract Pixels from Both Sides',\n        value: 0,\n        min: 0,\n        max: 100,\n        integer: true\n    })\n    .addCombo({\n        name: 'decimalPlaces',\n        label: 'Decimal Places',\n        options: [\n            { label: '0', value: 'zero' },\n            { label: '1', value: 'one' },\n            { label: '2', value: 'two' },\n            { label: '3', value: 'three' },\n            { label: 'Raw', value: 'raw' }\n        ],\n        value: 'two'\n    })\n    .addCheckbox({\n        name: 'enableSnapping',\n        label: 'Snap To Decimal',\n        value: true\n    })\n    .addCheckbox({\n        name: 'fluidSnapping',\n        label: 'Fluid Snapping',\n        value: false\n    })\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'sliderValue'\n    })\n    .finish();\n\nfunction getStepsValue(stepsString) {\n    switch (stepsString) {\n        case 'zero': return 0;\n        case 'one': return 1;\n        case 'two': return 2;\n        case 'three': return 3;\n        case 'raw': return 'raw';\n        default: return 1;\n    }\n}\n\nlet isDragging = false;\nlet dragOffset = new Vec3(0, 0, 0);\nlet parentLayer, parentLayerSize, storedValueKey, smoothValueKey;\nlet minX, maxX, decimalPlaces, snappingEnabled, fluidSnapping;\nlet currentSliderValue = 0;  \nlet targetSliderValue = null;  \nconst SMOOTH_THRESHOLD = 0.001; \nconst transitionSpeed = 0.2;  \n\nexport function init(value) {\n    storedValueKey = scriptProperties.sharedValueName;\n    smoothValueKey = scriptProperties.sharedValueName + 'Smooth';  \n\n    parentLayer = thisLayer.getParent();\n    parentLayerSize = parentLayer.size;\n\n    updateSliderBounds();\n\n    decimalPlaces = getStepsValue(scriptProperties.decimalPlaces);\n    snappingEnabled = scriptProperties.enableSnapping;\n    fluidSnapping = scriptProperties.fluidSnapping;\n\n    let savedValue = localStorage.get(storedValueKey);\n    let sliderValue = savedValue !== undefined\n        ? parseFloat(savedValue)\n        : constrainAndRoundValue(scriptProperties.defaultValue);\n\n    currentSliderValue = sliderValue;\n    shared[storedValueKey] = sliderValue;\n    shared[smoothValueKey] = sliderValue; \n\n    updateSliderPosition(sliderValue);\n}\n\nexport function cursorDown(event) {\n    // Ensure the click event only works when ckMediaScreenToggle is true\n    if (shared.ckMediaScreenToggle == true) {\n        isDragging = true;\n        dragOffset = thisLayer.origin.subtract(event.worldPosition);\n    }\n}\n\nexport function cursorMove(event) {\n    if (isDragging) {\n        let newPosX = Math.max(minX, Math.min(event.worldPosition.x + dragOffset.x, maxX));\n        thisLayer.origin = new Vec3(newPosX, thisLayer.origin.y, thisLayer.origin.z);\n        updateSharedValue(newPosX);\n    }\n}\n\nexport function cursorUp(event) {\n    // Ensure the release event only works when ckMediaScreenToggle is true\n    if (shared.ckMediaScreenToggle == true) {\n        isDragging = false;\n        localStorage.set(storedValueKey, shared[scriptProperties.sharedValueName].toString());\n    }\n}\n\nexport function update(deltaTime) {\n    if (fluidSnapping && targetSliderValue !== null) {\n        smoothTransitionToValue(targetSliderValue);\n    }\n}\n\nfunction smoothTransitionToValue(targetValue) {\n    currentSliderValue += (targetValue - currentSliderValue) * transitionSpeed;\n    if (Math.abs(currentSliderValue - targetValue) < SMOOTH_THRESHOLD) {\n        currentSliderValue = targetValue;\n        targetSliderValue = null;\n    }\n\n    updateSliderPosition(currentSliderValue);\n    shared[smoothValueKey] = currentSliderValue;\n}\n\nfunction updateSliderPosition(sliderValue) {\n    let sliderPosition = mapRange(sliderValue, scriptProperties.minValue, scriptProperties.maxValue, minX, maxX);\n    thisLayer.origin = new Vec3(sliderPosition, thisLayer.origin.y, thisLayer.origin.z);\n}\n\nfunction updateSliderBounds() {\n    minX = scriptProperties.pixelAdjustment;\n    maxX = parentLayerSize.x - scriptProperties.pixelAdjustment;\n}\n\nfunction updateSharedValue(newPosX) {\n    let sliderValue = mapRange(newPosX, minX, maxX, scriptProperties.minValue, scriptProperties.maxValue);\n    if (snappingEnabled) {\n        sliderValue = snapValueToDecimalPlaces(sliderValue, decimalPlaces);\n        if (fluidSnapping) {\n            targetSliderValue = sliderValue;\n        } else {\n            currentSliderValue = sliderValue;\n            shared[smoothValueKey] = sliderValue;\n            shared[storedValueKey] = sliderValue;\n\n            updateSliderPosition(sliderValue);\n            return;\n        }\n    } else {\n        sliderValue = roundOrUseRaw(sliderValue, decimalPlaces);\n    }\n\n    shared[storedValueKey] = sliderValue;\n    shared[smoothValueKey] = currentSliderValue;\n}\n\nfunction snapValueToDecimalPlaces(value, decimals) {\n    if (decimals === 'raw') return value;\n    let factor = Math.pow(10, decimals);\n    return Math.round(value * factor) / factor;\n}\n\nfunction constrainAndRoundValue(value) {\n    value = Math.max(scriptProperties.minValue, Math.min(value, scriptProperties.maxValue));\n    return roundOrUseRaw(value, decimalPlaces);\n}\n\nfunction roundOrUseRaw(value, decimals) {\n    if (decimals === 'raw') return value;\n    return roundToDecimals(value, decimals);\n}\n\nfunction mapRange(value, inMin, inMax, outMin, outMax) {\n    return outMin + (value - inMin) * (outMax - outMin) / (inMax - inMin);\n}\n\nfunction roundToDecimals(value, decimals) {\n    let factor = Math.pow(10, decimals);\n    return Math.round(value * factor) / factor;\n}\n",
+				"scriptproperties" : 
+				{
+					"decimalPlaces" : "one",
+					"defaultValue" : 0.5,
+					"enableSnapping" : true,
+					"fluidSnapping" : true,
+					"maxValue" : 1,
+					"minValue" : 0,
+					"pixelAdjustment" : 8,
+					"sharedValueName" : "ckMediaVolumeSlider"
+				},
+				"value" : "63.00000 0.00000 0.00000"
+			},
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 160,
+			"scale" : 
+			{
+				"script" : "'use strict';\n// Please note: Do not remove this line or asset references may break.\nexport let __workshopId = '3325757623';\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'hoverScale',\n        label: 'Hover Scale',\n        value: 1.2,\n        min: 1,\n        max: 2,\n        integer: false\n    })\n    .addSlider({\n        name: 'speed',\n        label: 'Animation Speed',\n        value: 5,\n        min: 0.1,\n        max: 10,\n        integer: false\n    })\n    .finish();\n\nlet targetScale = new Vec3(1, 1, 1);\nlet currentScale = new Vec3(1, 1, 1);\nlet originalScale = new Vec3(1, 1, 1);\nlet isHovered = false;\n\nexport function init(value) {\n    originalScale = value;\n    currentScale = value;\n    targetScale = value;\n}\n\nexport function update(value) {\n    let frametime = scriptProperties.speed * 0.1;\n    currentScale = new Vec3(\n        smoothMix(currentScale.x, targetScale.x, frametime),\n        smoothMix(currentScale.y, targetScale.y, frametime),\n        smoothMix(currentScale.z, targetScale.z, frametime)\n    );\n    return currentScale;\n}\n\nexport function cursorEnter(event) {\n    isHovered = true;\n    targetScale = originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1));\n}\n\nexport function cursorLeave(event) {\n    isHovered = false;\n    targetScale = originalScale;\n}\n\nfunction smoothMix(a, b, v) {\n    return b + (a - b) * Math.exp(-v * engine.frametime * 25);\n}\n",
+				"scriptproperties" : 
+				{
+					"hoverScale" : 1.2,
+					"speed" : 5
+				},
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"size" : "16.00000 16.00000"
+		},
+		{
+			"angles" : 
+			{
+				"script" : "'use strict';\n\n// This script controls the play-state of the music player and changes the sprite-sheet frame that is shown on this layer\n\nexport function init() {\n    let anim = thisLayer.getTextureAnimation();\n    anim.pause();\n\n    if (shared.ckMediaPlayButton) {\n        anim.setFrame(1);\n    } else {\n        anim.setFrame(0);\n    }\n}\n\nexport function update() {\n    let anim = thisLayer.getTextureAnimation();\n\n    if (shared.ckMediaPlayButton) {\n        anim.setFrame(1);\n    } else {\n        anim.setFrame(0);\n    }\n}\n\nexport function cursorClick(event) {\n    // Check if shared.ckMediaScreenToggle is true\n    if (shared.ckMediaScreenToggle == true) {\n        let anim = thisLayer.getTextureAnimation();\n\n        // Toggle the play button state\n        shared.ckMediaPlayButton = !shared.ckMediaPlayButton;\n\n        if (shared.ckMediaPlayButton) {\n            anim.setFrame(1);\n        } else {\n            anim.setFrame(0);\n        }\n    }\n}\n",
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"id" : 214,
+			"image" : "models/playAndPause.json",
+			"name" : "Play Button",
+			"origin" : "-128.00000 0.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 154,
+			"scale" : 
+			{
+				"script" : "'use strict';\n\n// Button animation script\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'hoverScale',\n        label: 'Hover Scale',\n        value: 1.2,\n        min: 1,\n        max: 2,\n        integer: false\n    })\n    .addSlider({\n        name: 'clickScale',\n        label: 'Click Scale',\n        value: 0.8,\n        min: 0.5,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'speed',\n        label: 'Animation Speed',\n        value: 5,\n        min: 0.1,\n        max: 10,\n        integer: false\n    })\n    .finish();\n\nlet targetScale = new Vec3(1, 1, 1);\nlet currentScale = new Vec3(1, 1, 1);\nlet originalScale = new Vec3(1, 1, 1);\nlet isHovered = false;\nlet isClicked = false;\n\nexport function init(value) {\n    originalScale = value;\n    currentScale = value;\n    targetScale = value;\n}\n\nexport function update(value) {\n    let frametime = engine.frametime * (scriptProperties.speed * 2);\n    currentScale = currentScale.mix(targetScale, frametime);\n    return currentScale;\n}\n\nexport function cursorEnter(event) {\n    isHovered = true;\n    if (!isClicked) {\n        targetScale = originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1));\n    }\n}\n\nexport function cursorLeave(event) {\n    isHovered = false;\n    if (!isClicked) {\n        targetScale = originalScale;\n    }\n}\n\nexport function cursorClick(event) {\n    isClicked = true;\n    targetScale = originalScale.multiply(new Vec3(scriptProperties.clickScale, scriptProperties.clickScale, 1));\n    engine.setTimeout(() => {\n        isClicked = false;\n        targetScale = isHovered ? \n                      originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1)) : \n                      originalScale;\n    }, 150);\n}\n",
+				"scriptproperties" : 
+				{
+					"clickScale" : 0.89999998,
+					"hoverScale" : 1.2,
+					"speed" : 6
+				},
+				"value" : "0.70000 0.70000 0.70000"
+			},
+			"size" : "64.00000 64.00000"
+		},
+		{
+			"angles" : 
+			{
+				"script" : "'use strict';\n\nlet selectedAction;\n\nexport var scriptProperties = createScriptProperties()\n    .addCombo({\n        name: 'action',\n        label: 'Choose Action',\n        options: [\n            { label: 'Play/Pause', value: 'ckMediaPlayButton' },\n            { label: 'Next Song', value: 'ckMediaNextButton' },\n            { label: 'Previous Song', value: 'ckMediaPreviousButton' }\n        ],\n        value: 'ckMediaPlayButton'\n    })\n    .finish();\n\nexport function init() {\n    selectedAction = scriptProperties.action;\n}\n\nexport function cursorClick(event) {\n    if (shared.ckMediaScreenToggle == true) {\n    shared[selectedAction] = true;\n    }\n}",
+				"scriptproperties" : 
+				{
+					"action" : "ckMediaNextButton"
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"id" : 215,
+			"image" : "models/next2.json",
+			"name" : "Next Button",
+			"origin" : "-48.00000 0.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 154,
+			"scale" : 
+			{
+				"script" : "'use strict';\n\n// Button animation script\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'hoverScale',\n        label: 'Hover Scale',\n        value: 1.2,\n        min: 1,\n        max: 2,\n        integer: false\n    })\n    .addSlider({\n        name: 'clickScale',\n        label: 'Click Scale',\n        value: 0.8,\n        min: 0.5,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'speed',\n        label: 'Animation Speed',\n        value: 5,\n        min: 0.1,\n        max: 10,\n        integer: false\n    })\n    .finish();\n\nlet targetScale = new Vec3(1, 1, 1);\nlet currentScale = new Vec3(1, 1, 1);\nlet originalScale = new Vec3(1, 1, 1);\nlet isHovered = false;\nlet isClicked = false;\n\nexport function init(value) {\n    originalScale = value;\n    currentScale = value;\n    targetScale = value;\n}\n\nexport function update(value) {\n    let frametime = engine.frametime * (scriptProperties.speed * 2);\n    currentScale = currentScale.mix(targetScale, frametime);\n    return currentScale;\n}\n\nexport function cursorEnter(event) {\n    isHovered = true;\n    if (!isClicked) {\n        targetScale = originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1));\n    }\n}\n\nexport function cursorLeave(event) {\n    isHovered = false;\n    if (!isClicked) {\n        targetScale = originalScale;\n    }\n}\n\nexport function cursorClick(event) {\n    isClicked = true;\n    targetScale = originalScale.multiply(new Vec3(scriptProperties.clickScale, scriptProperties.clickScale, 1));\n    engine.setTimeout(() => {\n        isClicked = false;\n        targetScale = isHovered ? \n                      originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1)) : \n                      originalScale;\n    }, 150);\n}\n",
+				"scriptproperties" : 
+				{
+					"clickScale" : 0.89999998,
+					"hoverScale" : 1.2,
+					"speed" : 6
+				},
+				"value" : "0.75000 0.75000 0.75000"
+			},
+			"size" : "64.00000 64.00000"
+		},
+		{
+			"angles" : 
+			{
+				"script" : "'use strict';\n\nlet selectedAction;\n\nexport var scriptProperties = createScriptProperties()\n    .addCombo({\n        name: 'action',\n        label: 'Choose Action',\n        options: [\n            { label: 'Play/Pause', value: 'ckMediaPlayButton' },\n            { label: 'Next Song', value: 'ckMediaNextButton' },\n            { label: 'Previous Song', value: 'ckMediaPreviousButton' }\n        ],\n        value: 'ckMediaPlayButton'\n    })\n    .finish();\n\nexport function init() {\n    selectedAction = scriptProperties.action;\n}\n\nexport function cursorClick(event) {\n    if (shared.ckMediaScreenToggle == true) {\n    shared[selectedAction] = true;\n    }\n}",
+				"scriptproperties" : 
+				{
+					"action" : "ckMediaPreviousButton"
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"id" : 222,
+			"image" : "models/prev.json",
+			"name" : "Previous Button",
+			"origin" : "-204.00000 0.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 154,
+			"scale" : 
+			{
+				"script" : "'use strict';\n\n// Button animation script\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'hoverScale',\n        label: 'Hover Scale',\n        value: 1.2,\n        min: 1,\n        max: 2,\n        integer: false\n    })\n    .addSlider({\n        name: 'clickScale',\n        label: 'Click Scale',\n        value: 0.8,\n        min: 0.5,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'speed',\n        label: 'Animation Speed',\n        value: 5,\n        min: 0.1,\n        max: 10,\n        integer: false\n    })\n    .finish();\n\nlet targetScale = new Vec3(1, 1, 1);\nlet currentScale = new Vec3(1, 1, 1);\nlet originalScale = new Vec3(1, 1, 1);\nlet isHovered = false;\nlet isClicked = false;\n\nexport function init(value) {\n    originalScale = value;\n    currentScale = value;\n    targetScale = value;\n}\n\nexport function update(value) {\n    let frametime = engine.frametime * (scriptProperties.speed * 2);\n    currentScale = currentScale.mix(targetScale, frametime);\n    return currentScale;\n}\n\nexport function cursorEnter(event) {\n    isHovered = true;\n    if (!isClicked) {\n        targetScale = originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1));\n    }\n}\n\nexport function cursorLeave(event) {\n    isHovered = false;\n    if (!isClicked) {\n        targetScale = originalScale;\n    }\n}\n\nexport function cursorClick(event) {\n    isClicked = true;\n    targetScale = originalScale.multiply(new Vec3(scriptProperties.clickScale, scriptProperties.clickScale, 1));\n    engine.setTimeout(() => {\n        isClicked = false;\n        targetScale = isHovered ? \n                      originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1)) : \n                      originalScale;\n    }, 150);\n}\n",
+				"scriptproperties" : 
+				{
+					"clickScale" : 0.89999998,
+					"hoverScale" : 1.2,
+					"speed" : 6
+				},
+				"value" : "0.75000 0.75000 0.75000"
+			},
+			"size" : "64.00000 64.00000"
+		},
+		{
+			"angles" : 
+			{
+				"script" : "'use strict';\n\n// This script controls the loop/shuffle-state of the music player and changes the sprite-sheet frame that is shown on this layer\n\nexport function init() {\n    let anim = thisLayer.getTextureAnimation();\n    anim.pause();\n\n    let storedLoopState = localStorage.get('ckMediaLoopButton');\n\n    if (storedLoopState !== undefined && storedLoopState !== null) {\n        shared.ckMediaLoopButton = storedLoopState;\n    } else {\n        shared.ckMediaLoopButton = 'false';\n    }\n\n    switch (shared.ckMediaLoopButton) {\n        case 'true':\n            anim.setFrame(1);\n            break;\n        case 'shuffle':\n            anim.setFrame(2);\n            break;\n        default:\n            anim.setFrame(0);\n            break;\n    }\n}\n\nexport function cursorClick(event) {\n    // Ensure the click event only works when ckMediaScreenToggle is true\n    if (shared.ckMediaScreenToggle == true) {\n        let anim = thisLayer.getTextureAnimation();\n\n        switch (shared.ckMediaLoopButton) {\n            case 'false':\n                shared.ckMediaLoopButton = 'true';\n                anim.setFrame(1);\n                break;\n            case 'true':\n                shared.ckMediaLoopButton = 'shuffle';\n                anim.setFrame(2);\n                break;\n            case 'shuffle':\n                shared.ckMediaLoopButton = 'false';\n                anim.setFrame(0);\n                break;\n        }\n\n        localStorage.set('ckMediaLoopButton', shared.ckMediaLoopButton);\n    }\n}\n",
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"id" : 223,
+			"image" : "models/ShuffleButton.json",
+			"name" : "ShuffleButton",
+			"origin" : "32.00000 0.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 154,
+			"scale" : 
+			{
+				"script" : "'use strict';\n\n// Button animation script\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'hoverScale',\n        label: 'Hover Scale',\n        value: 1.2,\n        min: 1,\n        max: 2,\n        integer: false\n    })\n    .addSlider({\n        name: 'clickScale',\n        label: 'Click Scale',\n        value: 0.8,\n        min: 0.5,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'speed',\n        label: 'Animation Speed',\n        value: 5,\n        min: 0.1,\n        max: 10,\n        integer: false\n    })\n    .finish();\n\nlet targetScale = new Vec3(1, 1, 1);\nlet currentScale = new Vec3(1, 1, 1);\nlet originalScale = new Vec3(1, 1, 1);\nlet isHovered = false;\nlet isClicked = false;\n\nexport function init(value) {\n    originalScale = value;\n    currentScale = value;\n    targetScale = value;\n}\n\nexport function update(value) {\n    let frametime = engine.frametime * (scriptProperties.speed * 2);\n    currentScale = currentScale.mix(targetScale, frametime);\n    return currentScale;\n}\n\nexport function cursorEnter(event) {\n    isHovered = true;\n    if (!isClicked) {\n        targetScale = originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1));\n    }\n}\n\nexport function cursorLeave(event) {\n    isHovered = false;\n    if (!isClicked) {\n        targetScale = originalScale;\n    }\n}\n\nexport function cursorClick(event) {\n    isClicked = true;\n    targetScale = originalScale.multiply(new Vec3(scriptProperties.clickScale, scriptProperties.clickScale, 1));\n    engine.setTimeout(() => {\n        isClicked = false;\n        targetScale = isHovered ? \n                      originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1)) : \n                      originalScale;\n    }, 150);\n}\n",
+				"scriptproperties" : 
+				{
+					"clickScale" : 0.89999998,
+					"hoverScale" : 1.2,
+					"speed" : 6
+				},
+				"value" : "0.75000 0.75000 0.75000"
+			},
+			"size" : "64.00000 64.00000"
+		},
+		{
+			"alpha" : 0.25,
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_1",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor1",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"id" : 224,
+			"image" : "models/util/solidlayer.json",
+			"name" : "mainBackdrop",
+			"origin" : "0.00000 -194.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 147,
+			"size" : "512.00000 128.00000"
+		},
+		{
+			"alpha" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'minValue',\n        label: 'Minimum Value',\n        value: 0,\n        min: 0,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'maxValue',\n        label: 'Maximum Value',\n        value: 1,\n        min: 0,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'transitionSpeed',\n        label: 'Transition Speed',\n        value: 1,\n        min: 0.1,\n        max: 10,\n        integer: false\n    })\n    .addText({\n        name: 'sharedVariableName',\n        label: 'Shared Variable Name',\n        value: 'sharedValue'\n    })\n    .finish();\n\nlet isMax = false;\nlet currentValue;\nlet targetValue;\n\nexport function init(value) {\n    currentValue = scriptProperties.minValue;\n    targetValue = scriptProperties.minValue;\n}\n\nexport function cursorClick(event) {\n    isMax = !isMax;\n    targetValue = isMax ? scriptProperties.maxValue : scriptProperties.minValue;\n}\n\nexport function update(value) {\n    const transitionSpeed = scriptProperties.transitionSpeed * engine.frametime;\n    currentValue = WEMath.mix(currentValue, targetValue, transitionSpeed);\n\n    shared[scriptProperties.sharedVariableName] = currentValue;\n}\n",
+				"scriptproperties" : 
+				{
+					"maxValue" : 180,
+					"minValue" : 0,
+					"sharedVariableName" : "spinToggle",
+					"transitionSpeed" : 7
+				},
+				"value" : 1.0
+			},
+			"angles" : 
+			{
+				"script" : "'use strict';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'sharedValueName'\n    })\n    .addCombo({\n        name: 'axis',\n        label: 'Axis',\n        options: [\n            { label: 'X', value: 'x' },\n            { label: 'Y', value: 'y' },\n            { label: 'Z', value: 'z' }\n        ],\n        value: 'x'\n    })\n    .finish();\n\nexport function update(value) {\n    const sharedValue = shared[scriptProperties.sharedValueName];\n\n    if (typeof value === 'object' && sharedValue !== undefined) {\n        switch (scriptProperties.axis) {\n            case 'x':\n                value.x = sharedValue;\n                break;\n            case 'y':\n                value.y = sharedValue;\n                break;\n            case 'z':\n                value.z = sharedValue;\n                break;\n        }\n    }\n\n    return value;\n}\n",
+				"scriptproperties" : 
+				{
+					"axis" : "z",
+					"sharedValueName" : "spinToggle"
+				},
+				"value" : "0.00000 -0.00000 0.00000"
+			},
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"id" : 228,
+			"image" : "models/arrow_drop_up_128dp_FFFFFF_FILL1_wght700_GRAD200_opsz48.json",
+			"name" : "ScreenToggle",
+			"origin" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'minValue',\n        label: 'Minimum Value',\n        value: 0,\n        min: 0,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'maxValue',\n        label: 'Maximum Value',\n        value: 1,\n        min: 0,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'transitionSpeed',\n        label: 'Transition Speed',\n        value: 1,\n        min: 0.1,\n        max: 10,\n        integer: false\n    })\n    .addText({\n        name: 'sharedVariableName',\n        label: 'Shared Variable Name',\n        value: 'sharedValue'\n    })\n    .finish();\n\nlet isMax = false;\nlet currentValue;\nlet targetValue;\n\nexport function init(value) {\n    currentValue = scriptProperties.minValue;\n    targetValue = scriptProperties.minValue;\n}\n\nexport function cursorClick(event) {\n    isMax = !isMax;\n    targetValue = isMax ? scriptProperties.maxValue : scriptProperties.minValue;\n}\n\nexport function update(value) {\n    const transitionSpeed = scriptProperties.transitionSpeed * engine.frametime;\n    currentValue = WEMath.mix(currentValue, targetValue, transitionSpeed);\n\n    shared[scriptProperties.sharedVariableName] = currentValue;\n\n    if (currentValue > (scriptProperties.maxValue + scriptProperties.minValue * 0.5)) {\n        shared.ckMediaScreenToggle = true;\n    } else if (currentValue < (scriptProperties.maxValue + scriptProperties.minValue * 0.5)) {\n        shared.ckMediaScreenToggle = false;\n    }\n}\n",
+				"scriptproperties" : 
+				{
+					"maxValue" : 42,
+					"minValue" : -32,
+					"sharedVariableName" : "moveScreenToggle",
+					"transitionSpeed" : 8
+				},
+				"value" : "216.00000 -162.00000 0.00000"
+			},
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 147,
+			"scale" : 
+			{
+				"script" : "'use strict';\n\n// Button animation script\n\nexport var scriptProperties = createScriptProperties()\n    .addSlider({\n        name: 'hoverScale',\n        label: 'Hover Scale',\n        value: 1.2,\n        min: 1,\n        max: 2,\n        integer: false\n    })\n    .addSlider({\n        name: 'clickScale',\n        label: 'Click Scale',\n        value: 0.8,\n        min: 0.5,\n        max: 1,\n        integer: false\n    })\n    .addSlider({\n        name: 'speed',\n        label: 'Animation Speed',\n        value: 5,\n        min: 0.1,\n        max: 10,\n        integer: false\n    })\n    .finish();\n\nlet targetScale = new Vec3(1, 1, 1);\nlet currentScale = new Vec3(1, 1, 1);\nlet originalScale = new Vec3(1, 1, 1);\nlet isHovered = false;\nlet isClicked = false;\n\nexport function init(value) {\n    originalScale = value;\n    currentScale = value;\n    targetScale = value;\n}\n\nexport function update(value) {\n    let frametime = engine.frametime * (scriptProperties.speed * 2);\n    currentScale = currentScale.mix(targetScale, frametime);\n    return currentScale;\n}\n\nexport function cursorEnter(event) {\n    isHovered = true;\n    if (!isClicked) {\n        targetScale = originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1));\n    }\n}\n\nexport function cursorLeave(event) {\n    isHovered = false;\n    if (!isClicked) {\n        targetScale = originalScale;\n    }\n}\n\nexport function cursorClick(event) {\n    isClicked = true;\n    targetScale = originalScale.multiply(new Vec3(scriptProperties.clickScale, scriptProperties.clickScale, 1));\n    engine.setTimeout(() => {\n        isClicked = false;\n        targetScale = isHovered ? \n                      originalScale.multiply(new Vec3(scriptProperties.hoverScale, scriptProperties.hoverScale, 1)) : \n                      originalScale;\n    }, 150);\n}\n",
+				"scriptproperties" : 
+				{
+					"clickScale" : 1,
+					"hoverScale" : 1.2,
+					"speed" : 5
+				},
+				"value" : "0.65000 0.75000 0.75000"
+			},
+			"size" : "64.00000 64.00000"
+		},
+		{
+			"anchor" : "none",
+			"angles" : "0.00000 -0.00000 0.00000",
+			"backgroundbrightness" : 1.0,
+			"backgroundcolor" : "0.00000 0.00000 0.00000",
+			"blockalign" : false,
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"depthtest" : "enabled",
+			"font" : "fonts/Gabarito-Black.ttf",
+			"horizontalalign" : "left",
+			"id" : 229,
+			"limitrows" : false,
+			"limituseellipsis" : false,
+			"limitwidth" : false,
+			"maxrows" : 1,
+			"maxwidth" : 500.0,
+			"name" : "Current Artist Name",
+			"opaquebackground" : false,
+			"origin" : "-226.00000 -172.00000 0.00000",
+			"padding" : 32,
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 147,
+			"pointsize" : 5.0,
+			"size" : "183.00000 25.00000",
+			"text" : 
+			{
+				"script" : "'use strict';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'sharedValueName'\n    })\n    .finish();\n\nexport function update() {\n    return shared[scriptProperties.sharedValueName];\n}\n",
+				"scriptproperties" : 
+				{
+					"sharedValueName" : "ckMediaCurrentArtist"
+				},
+				"value" : "Current Artist Name"
+			},
+			"verticalalign" : "bottom"
+		},
+		{
+			"anchor" : "none",
+			"angles" : "0.00000 -0.00000 0.00000",
+			"backgroundbrightness" : 1.0,
+			"backgroundcolor" : "0.00000 0.00000 0.00000",
+			"blockalign" : false,
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"depthtest" : "enabled",
+			"font" : "fonts/Gabarito-SemiBold.ttf",
+			"horizontalalign" : "left",
+			"id" : 230,
+			"limitrows" : false,
+			"limituseellipsis" : false,
+			"limitwidth" : false,
+			"maxrows" : 1,
+			"maxwidth" : 500.0,
+			"name" : "Current Song Title",
+			"opaquebackground" : false,
+			"origin" : "-226.00000 -168.00000 0.00000",
+			"padding" : 32,
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 147,
+			"pointsize" : 8.0,
+			"size" : "264.00000 40.00000",
+			"text" : 
+			{
+				"script" : "'use strict';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'sharedValueName'\n    })\n    .finish();\n\nexport function update() {\n    return shared[scriptProperties.sharedValueName];\n}\n",
+				"scriptproperties" : 
+				{
+					"sharedValueName" : "ckMediaCurrentSong"
+				},
+				"value" : "Current Song Title"
+			},
+			"verticalalign" : "top"
+		},
+		{
+			"alignment" : "left",
+			"alpha" : 0.25,
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor4'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_3",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor3",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"effects" : 
+			[
+				{
+					"file" : "effects/workshop/3325757623/rounded_mask/effect.json",
+					"id" : 232,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"B_SQUARE" : 0
+							},
+							"constantshadervalues" : 
+							{
+								"Radius" : 1,
+								"Size" : "1 1",
+								"Softness" : 0.25,
+								"ui_editor_properties_opacity" : 1
+							},
+							"id" : 233
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 231,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Progress Bar Backdrop",
+			"origin" : "-226.00000 -222.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 147,
+			"size" : "452.00000 16.00000"
+		},
+		{
+			"alignment" : "left",
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor#'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"id" : 237,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Progress Bar",
+			"origin" : "8.00000 0.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 231,
+			"scale" : 
+			{
+				"script" : "'use strict';\n\n// 'Shared Value Receiver' used to receive the scale of the progress bar\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'sharedValueName'\n    })\n    .finish();\n\nexport function update(value) {\n    let xValue = shared[scriptProperties.sharedValueName];\n    return new Vec3(xValue, value.y, value.z);\n}",
+				"scriptproperties" : 
+				{
+					"sharedValueName" : "ckMediaSongProgression"
+				},
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"size" : "436.00000 16.00000"
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor#'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_4",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor4",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.00000 0.00000 0.00000"
+			},
+			"effects" : 
+			[
+				{
+					"file" : "effects/workshop/3325757623/rounded_mask/effect.json",
+					"id" : 243,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"B_SQUARE" : 0
+							},
+							"constantshadervalues" : 
+							{
+								"Radius" : 1,
+								"Size" : "1 1",
+								"Softness" : 0.25,
+								"ui_editor_properties_opacity" : 1
+							},
+							"id" : 244
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 242,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Rounded L",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 237,
+			"scale" : 
+			{
+				"script" : "'use strict';\n\n// This script will compensate for the progress bars (Parent-Layer) change in scale.\n\nlet initValue, parent, initParent\n\nexport function update(value) {\n    value.x = initValue.x / Math.max(0.001, Math.abs(parent.scale.x)) * initParent.x;\n    return value;\n}\n\nexport function init(value) {\n    parent = thisLayer.getParent();\n    initParent = parent.scale;\n    initValue = value;\n}",
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"size" : "16.00000 16.00000"
+		},
+		{
+			"angles" : "0.00000 -0.00000 0.00000",
+			"castshadow" : false,
+			"color" : 
+			{
+				"script" : "'use strict';\n\nimport * as WEMath from 'WEMath';\n\nexport var scriptProperties = createScriptProperties()\n    .addText({\n        name: 'sharedValueName',\n        label: 'Shared Value Name',\n        value: 'paletteColor#'\n    })\n    .addCheckbox({\n        name: 'useFallbackColor',\n        label: 'Use Custom Color',\n        value: false\n    })\n    .addColor({\n        name: 'fallbackColor',\n        label: 'Custom Color',\n        value: new Vec3(1, 1, 1)\n    })\n    .addSlider({\n        name: 'transitionDuration',\n        label: 'Transition Duration',\n        value: 0.5,\n        min: 0.1,\n        max: 2,\n        integer: false\n    })\n    .finish();\n\nlet newColor = new Vec3(0, 0, 0);\nlet oldColor = new Vec3(0, 0, 0);\nlet currentColor = new Vec3(0, 0, 0);\nlet timer = 0;\nlet previousSharedValue = null;\n\nfunction getCurrentTargetColor() {\n    return scriptProperties.useFallbackColor ? scriptProperties.fallbackColor : (shared[scriptProperties.sharedValueName] || scriptProperties.fallbackColor);\n}\n\nfunction isVec3Equal(vecA, vecB) {\n    return vecA.x === vecB.x && vecA.y === vecB.y && vecA.z === vecB.z;\n}\n\nexport function init(value) {\n    newColor = getCurrentTargetColor();\n    oldColor = newColor;\n    currentColor = newColor;\n    timer = scriptProperties.transitionDuration;\n    previousSharedValue = newColor;\n    return newColor;\n}\n\n\nexport function update(value) {\n    const transitionDuration = scriptProperties.transitionDuration;\n    const currentSharedValue = getCurrentTargetColor();\n\n    if (!isVec3Equal(currentSharedValue, previousSharedValue)) {\n        previousSharedValue = currentSharedValue;\n        oldColor = currentColor;\n        newColor = currentSharedValue;\n        timer = 0;\n    }\n\n    if (timer < transitionDuration) {\n        const ratio = WEMath.mix(0, 1, timer / transitionDuration);\n        currentColor = oldColor.multiply(1 - ratio).add(newColor.multiply(ratio));\n        timer += engine.frametime;\n    } else {\n        currentColor = newColor;\n    }\n\n    return currentColor;\n}\n",
+				"scriptproperties" : 
+				{
+					"fallbackColor" : 
+					{
+						"user" : "_2",
+						"value" : "1.00000 1.00000 1.00000"
+					},
+					"sharedValueName" : "paletteColor2",
+					"transitionDuration" : 0.5,
+					"useFallbackColor" : 
+					{
+						"user" : "customcolor",
+						"value" : false
+					}
+				},
+				"value" : "0.02745 0.62745 0.76471"
+			},
+			"effects" : 
+			[
+				{
+					"file" : "effects/workshop/3325757623/rounded_mask/effect.json",
+					"id" : 247,
+					"name" : "",
+					"passes" : 
+					[
+						{
+							"combos" : 
+							{
+								"B_SQUARE" : 0
+							},
+							"constantshadervalues" : 
+							{
+								"Radius" : 1,
+								"Size" : "1 1",
+								"Softness" : 0.25,
+								"ui_editor_properties_opacity" : 1
+							},
+							"id" : 248
+						}
+					],
+					"visible" : true
+				}
+			],
+			"id" : 246,
+			"image" : "models/util/solidlayer.json",
+			"name" : "Rounded R",
+			"origin" : "436.00000 0.00000 0.00000",
+			"parallaxDepth" : "0.00000 0.00000",
+			"parent" : 237,
+			"scale" : 
+			{
+				"script" : "'use strict';\n\n// This script will compensate for the progress bars (Parent-Layer) change in scale.\n\nlet initValue, parent, initParent\n\nexport function update(value) {\n    value.x = initValue.x / Math.max(0.001, Math.abs(parent.scale.x)) * initParent.x;\n    return value;\n}\n\nexport function init(value) {\n    parent = thisLayer.getParent();\n    initParent = parent.scale;\n    initValue = value;\n}",
+				"value" : "1.00000 1.00000 1.00000"
+			},
+			"size" : "16.00000 16.00000"
+		}
+	],
+	"version" : 4
+}
